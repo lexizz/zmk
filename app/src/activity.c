@@ -52,19 +52,14 @@ static uint32_t activity_last_uptime;
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
-static uint32_t last_periodic_sync_time = 0;
+static uint32_t last_periodic_sync_time;
 #define PERIODIC_SYNC_INTERVAL_MS CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC_INTERVAL_MS
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
-static uint32_t last_event_sync_time = 0;
+static uint32_t last_event_sync_time;
 #define EVENT_SYNC_MIN_INTERVAL_MS CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_EVENT_MIN_INTERVAL
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
-
-#if IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC) ||                             \
-    IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
-static int32_t last_sent_inactive_duration = -1;
-#endif
 
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 
@@ -95,16 +90,9 @@ static int note_activity(void) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&                                                   \
     IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
     if (activity_last_uptime - last_event_sync_time > EVENT_SYNC_MIN_INTERVAL_MS) {
-        int32_t current_inactive = 0;  // currently active
-
-        // Only send if: never sent OR last sent value indicates peripheral might sleep
-        if (last_sent_inactive_duration == -1 ||
-            last_sent_inactive_duration > 60000) {  // 1 minute threshold
-            LOG_DBG("Event sync (was inactive %dms)", last_sent_inactive_duration);
-            zmk_split_bt_queue_sync_activity(current_inactive);
-            last_sent_inactive_duration = current_inactive;
-        }
+        LOG_DBG("Refresh %d", activity_last_uptime - last_event_sync_time);
         last_event_sync_time = activity_last_uptime;
+        zmk_split_bt_queue_sync_activity(0);
     }
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&
        // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
@@ -139,23 +127,7 @@ void activity_work_handler(struct k_work *work) {
     IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
     if (current - last_periodic_sync_time > PERIODIC_SYNC_INTERVAL_MS) {
         last_periodic_sync_time = current;
-
-        // Only send if: never sent OR significant change (>10s) OR state transition
-        int32_t diff = last_sent_inactive_duration == -1 ? INT32_MAX :
-                       abs((int)(inactive_time - last_sent_inactive_duration));
-        bool state_transition = (inactive_time < MAX_IDLE_MS &&
-                                  last_sent_inactive_duration >= MAX_IDLE_MS) ||
-                                 (inactive_time >= MAX_IDLE_MS &&
-                                  last_sent_inactive_duration < MAX_IDLE_MS);
-
-        if (last_sent_inactive_duration == -1 ||
-            diff > 10000 ||  // 10 seconds change
-            state_transition) {
-            LOG_DBG("Periodic sync (inactive %dms, was %dms)", inactive_time,
-                    last_sent_inactive_duration);
-            zmk_split_bt_queue_sync_activity(inactive_time);
-            last_sent_inactive_duration = inactive_time;
-        }
+        zmk_split_bt_queue_sync_activity(inactive_time);
     }
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&
        // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)

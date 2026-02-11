@@ -17,6 +17,13 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/sensor_event.h>
+#include <zmk/events/sync_activity_event.h>
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC) ||                             \
+    IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
+#include <zmk/split/bluetooth/central.h>
+#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC) ||
+       // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
 
 #include <zmk/pm.h>
 
@@ -42,6 +49,20 @@ static enum zmk_activity_state activity_state;
 
 static uint32_t activity_last_uptime;
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
+static uint32_t last_periodic_sync_time;
+#define PERIODIC_SYNC_INTERVAL_MS CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC_INTERVAL_MS
+#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
+static uint32_t last_event_sync_time;
+#define EVENT_SYNC_MIN_INTERVAL_MS CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_EVENT_MIN_INTERVAL
+#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
+
+#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+
 #define MAX_IDLE_MS CONFIG_ZMK_IDLE_TIMEOUT
 
 #if IS_ENABLED(CONFIG_ZMK_SLEEP)
@@ -65,6 +86,16 @@ enum zmk_activity_state zmk_activity_get_state(void) { return activity_state; }
 
 static int note_activity(void) {
     activity_last_uptime = k_uptime_get();
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&                                                   \
+    IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
+    if (activity_last_uptime - last_event_sync_time > EVENT_SYNC_MIN_INTERVAL_MS) {
+        LOG_DBG("Refresh %d", activity_last_uptime - last_event_sync_time);
+        last_event_sync_time = activity_last_uptime;
+        zmk_split_bt_queue_sync_activity(0);
+    }
+#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&
+       // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT)
 
     return set_state(ZMK_ACTIVITY_ACTIVE);
 }
@@ -91,6 +122,15 @@ void activity_work_handler(struct k_work *work) {
         if (inactive_time > MAX_IDLE_MS) {
             set_state(ZMK_ACTIVITY_IDLE);
         }
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&                                                   \
+    IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
+    if (current - last_periodic_sync_time > PERIODIC_SYNC_INTERVAL_MS) {
+        last_periodic_sync_time = current;
+        zmk_split_bt_queue_sync_activity(inactive_time);
+    }
+#endif // IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&
+       // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC)
 }
 
 K_WORK_DEFINE(activity_work, activity_work_handler);
@@ -109,6 +149,34 @@ static int activity_init(void) {
 ZMK_LISTENER(activity, activity_event_listener);
 ZMK_SUBSCRIPTION(activity, zmk_position_state_changed);
 ZMK_SUBSCRIPTION(activity, zmk_sensor_event);
+
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&                                                  \
+    (IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC) ||                            \
+     IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT))
+
+int sync_activity_event_listener(const zmk_event_t *eh) {
+    int32_t current = k_uptime_get();
+
+    struct zmk_sync_activity_event *ev = as_zmk_sync_activity_event(eh);
+    if (ev == NULL) {
+        LOG_ERR("Invalid event type");
+        return -ENOTSUP;
+    }
+
+    activity_last_uptime = current - ev->central_inactive_duration;
+
+    if (activity_state == ZMK_ACTIVITY_IDLE && ev->central_inactive_duration < MAX_IDLE_MS) {
+        LOG_DBG("Syncing state to active to match central device.");
+        return set_state(ZMK_ACTIVITY_ACTIVE);
+    }
+    return 0;
+}
+
+ZMK_LISTENER(sync_activity, sync_activity_event_listener);
+ZMK_SUBSCRIPTION(sync_activity, zmk_sync_activity_event);
+#endif // !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) &&
+       // (IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC) ||
+       // IS_ENABLED(CONFIG_ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT))
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
 

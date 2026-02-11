@@ -30,6 +30,28 @@ config ZMK_SPLIT_PERIPHERAL_HID_INDICATORS
     help
       Enable propagating the HID (LED) Indicator state to the split peripheral(s).
 
+config ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC
+    bool "Sync last activity timing across all devices periodically"
+    default n
+    help
+        Sync central device last activity timing to the split peripheral(s) with a periodic interval.
+        Does not help to wake up peripheral devices that have gone to deep sleep.
+
+config ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_PERIODIC_INTERVAL_MS
+    int "Last activity time periodic sync interval in milliseconds"
+    default 30000
+
+config ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_ON_EVENT
+    bool "Sync last activity timing across all devices upon central activity event"
+    default n
+    help
+        Sync central device last activity timing to the split peripheral(s) when an event (key press/sensor)
+        is detected. Does not help to wake up peripheral devices that have gone to deep sleep.
+
+config ZMK_SPLIT_SYNC_LAST_ACTIVITY_TIMING_EVENT_MIN_INTERVAL
+    int "Sync timings on events (key/sensors presses) as well, 0 to disable. Represents minimum interval in milliseconds"
+    default 1000
+
 endif # ZMK_SPLIT
 
 rsource "bluetooth/Kconfig"

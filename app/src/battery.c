@@ -23,6 +23,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/workqueue.h>
 
 static uint8_t last_state_of_charge = 0;
+static uint8_t last_state_without_usb = 0;
+static uint8_t charging_start_level = 0;
+static int64_t charging_start_time = 0;
 
 uint8_t zmk_battery_state_of_charge(void) { return last_state_of_charge; }
 
@@ -84,9 +87,71 @@ static int zmk_battery_update(const struct device *battery) {
     }
 
     uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
-    state_of_charge.val1 = lithium_ion_mv_to_pct(mv);
 
-    LOG_DBG("State of change %d from %d mv", state_of_charge.val1, mv);
+    // When USB is connected, ADC reads charging voltage (~4.2V) instead of real battery level
+    // Estimate charging progress based on time
+    bool usb_present = is_usb_power_present();
+
+    if (usb_present && mv >= 4100) {
+        // USB charging detected
+        if (charging_start_time == 0) {
+            // First time detecting charging - save initial state
+            charging_start_level = last_state_without_usb > 0 ? last_state_without_usb : lithium_ion_mv_to_pct(mv);
+            charging_start_time = k_uptime_get();
+            state_of_charge.val1 = charging_start_level;
+            LOG_DBG("Charging started at %d%% (measured %d mV)", charging_start_level, mv);
+        } else {
+            // Estimate progress based on time
+            // Assumptions: 550mAh battery, 300mA charge current
+            // Full charge from 0% takes ~110 minutes
+            // Rate: 0-90% = 0.91%/min, 90-100% = 0.45%/min (slower near full)
+            int64_t elapsed_ms = k_uptime_get() - charging_start_time;
+            int32_t elapsed_min = (int32_t)(elapsed_ms / 60000);
+
+            // Calculate estimated charge added
+            uint8_t charge_added = 0;
+            int32_t remaining_min = elapsed_min;
+
+            // Phase 1: Fast charging (0-90%)
+            if (charging_start_level < 90) {
+                int32_t phase1_capacity = 90 - charging_start_level;
+                int32_t phase1_minutes = (int32_t)(remaining_min < phase1_capacity * 1.1f ? remaining_min : phase1_capacity * 1.1f);
+                charge_added += (uint8_t)(phase1_minutes / 1.1f);  // 0.91%/min
+                remaining_min -= phase1_minutes;
+            }
+
+            // Phase 2: Slow charging (90-100%)
+            if (remaining_min > 0 && (charging_start_level + charge_added) >= 90) {
+                int32_t phase2_minutes = remaining_min;
+                charge_added += (uint8_t)(phase2_minutes / 2.2f);  // 0.45%/min
+            }
+
+            state_of_charge.val1 = charging_start_level + charge_added;
+            if (state_of_charge.val1 > 100) {
+                state_of_charge.val1 = 100;
+            }
+
+            LOG_DBG("Charging: %d%% (started at %d%%, +%d%% over %d min, measured %d mV)",
+                    state_of_charge.val1, charging_start_level, charge_added, elapsed_min, mv);
+        }
+    } else {
+        // USB not present or voltage is normal - use real measurement
+        state_of_charge.val1 = lithium_ion_mv_to_pct(mv);
+
+        // Reset charging tracking when USB disconnected
+        if (charging_start_time != 0) {
+            charging_start_time = 0;
+            charging_start_level = 0;
+            LOG_DBG("Charging stopped, real level: %d%% (%d mV)", state_of_charge.val1, mv);
+        }
+
+        // Cache value when USB is not present
+        if (!usb_present) {
+            last_state_without_usb = state_of_charge.val1;
+        }
+
+        LOG_DBG("State of charge %d from %d mv", state_of_charge.val1, mv);
+    }
 #else
 #error "Not a supported reporting fetch mode"
 #endif

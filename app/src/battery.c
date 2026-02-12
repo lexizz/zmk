@@ -194,17 +194,13 @@ static void zmk_battery_work(struct k_work *work) {
 
 K_WORK_DEFINE(battery_work, zmk_battery_work);
 
-static void zmk_battery_timer(struct k_timer *timer) {
-    k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &battery_work);
+// Delayed work for initial measurement after boot
+static void zmk_battery_delayed_work(struct k_work *work) {
+    LOG_DBG("Initial battery measurement after boot stabilization");
+    zmk_battery_update(battery);
 }
 
-K_TIMER_DEFINE(battery_timer, zmk_battery_timer, NULL);
-
-static void zmk_battery_start_reporting() {
-    if (device_is_ready(battery)) {
-        k_timer_start(&battery_timer, K_NO_WAIT, K_SECONDS(CONFIG_ZMK_BATTERY_REPORT_INTERVAL));
-    }
-}
+K_WORK_DELAYABLE_DEFINE(battery_delayed_work, zmk_battery_delayed_work);
 
 static int zmk_battery_init(void) {
 #if !DT_HAS_CHOSEN(zmk_battery)
@@ -222,21 +218,39 @@ static int zmk_battery_init(void) {
         return -ENODEV;
     }
 
-    zmk_battery_start_reporting();
+    // Schedule initial measurement 3 seconds after boot
+    // This allows RGB, display, and BLE to stabilize first
+    // Measuring without heavy startup load gives accurate voltage reading
+    k_work_schedule(&battery_delayed_work, K_SECONDS(3));
+
     return 0;
 }
 
 static int battery_event_listener(const zmk_event_t *eh) {
 
     if (as_zmk_activity_state_changed(eh)) {
-        switch (zmk_activity_get_state()) {
+        enum zmk_activity_state state = zmk_activity_get_state();
+
+        switch (state) {
         case ZMK_ACTIVITY_ACTIVE:
-            zmk_battery_start_reporting();
+            // Measure immediately when waking up from sleep
+            // This happens BEFORE RGB and display fully activate, giving clean reading
+            LOG_DBG("Battery measurement on wake-up");
+            zmk_battery_update(battery);
             return 0;
+
         case ZMK_ACTIVITY_IDLE:
-        case ZMK_ACTIVITY_SLEEP:
-            k_timer_stop(&battery_timer);
+            // Measure once when transitioning to idle - minimal load
+            LOG_DBG("Battery measurement on idle transition");
+            zmk_battery_update(battery);
             return 0;
+
+        case ZMK_ACTIVITY_SLEEP:
+            // Measure once before deep sleep - almost no load
+            LOG_DBG("Battery measurement before sleep");
+            zmk_battery_update(battery);
+            return 0;
+
         default:
             break;
         }

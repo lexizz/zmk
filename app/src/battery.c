@@ -61,20 +61,20 @@ static int zmk_battery_update(const struct device *battery) {
 
     rc = sensor_sample_fetch_chan(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE);
     if (rc != 0) {
-        LOG_DBG("Failed to fetch battery values: %d", rc);
+        LOG_INF("!!! ERROR: Failed to fetch battery values: %d", rc);
         return rc;
     }
 
     rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &state_of_charge);
 
     if (rc != 0) {
-        LOG_DBG("Failed to get battery state of charge: %d", rc);
+        LOG_INF("!!! ERROR: Failed to get battery state of charge: %d", rc);
         return rc;
     }
 #elif IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE)
     rc = sensor_sample_fetch_chan(battery, SENSOR_CHAN_VOLTAGE);
     if (rc != 0) {
-        LOG_DBG("Failed to fetch battery values: %d", rc);
+        LOG_INF("!!! ERROR: Failed to fetch battery values: %d", rc);
         return rc;
     }
 
@@ -82,7 +82,7 @@ static int zmk_battery_update(const struct device *battery) {
     rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
 
     if (rc != 0) {
-        LOG_DBG("Failed to get battery voltage: %d", rc);
+        LOG_INF("!!! ERROR: Failed to get battery voltage: %d", rc);
         return rc;
     }
 
@@ -192,7 +192,7 @@ static void zmk_battery_work(struct k_work *work) {
     int rc = zmk_battery_update(battery);
 
     if (rc != 0) {
-        LOG_DBG("Failed to update battery value: %d.", rc);
+        LOG_INF("!!! ERROR: Failed to update battery value: %d", rc);
     }
 }
 
@@ -201,7 +201,12 @@ K_WORK_DEFINE(battery_work, zmk_battery_work);
 // Delayed work for initial measurement after boot
 static void zmk_battery_delayed_work(struct k_work *work) {
     LOG_INF("=== BOOT: Battery measurement ===");
-    zmk_battery_update(battery);
+    int rc = zmk_battery_update(battery);
+    if (rc != 0) {
+        LOG_INF("!!! BOOT measurement failed with error: %d", rc);
+    } else {
+        LOG_INF("=== BOOT measurement completed successfully ===");
+    }
 }
 
 K_WORK_DELAYABLE_DEFINE(battery_delayed_work, zmk_battery_delayed_work);
@@ -237,20 +242,30 @@ static int battery_event_listener(const zmk_event_t *eh) {
 
         LOG_INF("=== Activity state: %d ===", state);
 
+        int rc;
         switch (state) {
         case ZMK_ACTIVITY_ACTIVE:
             LOG_INF("=== ACTIVE: Battery measurement ===");
-            zmk_battery_update(battery);
+            rc = zmk_battery_update(battery);
+            if (rc != 0) {
+                LOG_INF("!!! ACTIVE measurement failed: %d", rc);
+            }
             return 0;
 
         case ZMK_ACTIVITY_IDLE:
             LOG_INF("=== IDLE: Battery measurement ===");
-            zmk_battery_update(battery);
+            rc = zmk_battery_update(battery);
+            if (rc != 0) {
+                LOG_INF("!!! IDLE measurement failed: %d", rc);
+            }
             return 0;
 
         case ZMK_ACTIVITY_SLEEP:
             LOG_INF("=== SLEEP: Battery measurement ===");
-            zmk_battery_update(battery);
+            rc = zmk_battery_update(battery);
+            if (rc != 0) {
+                LOG_INF("!!! SLEEP measurement failed: %d", rc);
+            }
             return 0;
 
         default:

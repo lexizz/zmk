@@ -57,8 +57,12 @@ static uint8_t lithium_ion_mv_to_pct(int16_t bat_mv) {
 
 #endif // IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE)
 
-// Forward declaration for zmk_battery_update (used in charging work)
+// Forward declarations
 static int zmk_battery_update(const struct device *battery);
+static void zmk_battery_charging_work(struct k_work *work);
+
+// Define delayable work for periodic charging measurements
+K_WORK_DELAYABLE_DEFINE(battery_charging_work, zmk_battery_charging_work);
 
 // Periodic work for monitoring battery voltage during charging
 static void zmk_battery_charging_work(struct k_work *work) {
@@ -69,8 +73,6 @@ static void zmk_battery_charging_work(struct k_work *work) {
         k_work_schedule(&battery_charging_work, K_SECONDS(30));
     }
 }
-
-K_WORK_DELAYABLE_DEFINE(battery_charging_work, zmk_battery_charging_work);
 
 static int zmk_battery_update(const struct device *battery) {
     struct sensor_value state_of_charge;

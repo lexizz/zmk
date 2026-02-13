@@ -88,13 +88,13 @@ static int zmk_battery_update(const struct device *battery) {
 
     uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
 
-    // Detailed ADC debugging
-    LOG_DBG("ADC raw: val1=%d val2=%d => %d mV", voltage.val1, voltage.val2, mv);
+    // Detailed ADC debugging - use INF to always see it
+    LOG_INF("ADC raw: val1=%d val2=%d => %d mV", voltage.val1, voltage.val2, mv);
 
     // When USB is connected, ADC reads charging voltage (~4.2V) instead of real battery level
     // Estimate charging progress based on time
     bool usb_present = is_usb_power_present();
-    LOG_DBG("USB present: %s", usb_present ? "YES" : "NO");
+    LOG_INF("USB present: %s", usb_present ? "YES" : "NO");
 
     if (usb_present && mv >= 4100) {
         // USB charging detected
@@ -103,7 +103,7 @@ static int zmk_battery_update(const struct device *battery) {
             charging_start_level = last_state_without_usb > 0 ? last_state_without_usb : lithium_ion_mv_to_pct(mv);
             charging_start_time = k_uptime_get();
             state_of_charge.val1 = charging_start_level;
-            LOG_DBG("Charging started at %d%% (measured %d mV)", charging_start_level, mv);
+            LOG_INF("=== Charging started at %d%% (measured %d mV) ===", charging_start_level, mv);
         } else {
             // Estimate progress based on time
             // Assumptions: 550mAh battery, 300mA charge current
@@ -135,7 +135,7 @@ static int zmk_battery_update(const struct device *battery) {
                 state_of_charge.val1 = 100;
             }
 
-            LOG_DBG("Charging: %d%% (started at %d%%, +%d%% over %d min, measured %d mV)",
+            LOG_INF("=== Charging: %d%% (started at %d%%, +%d%% over %d min, measured %d mV) ===",
                     state_of_charge.val1, charging_start_level, charge_added, elapsed_min, mv);
         }
     } else {
@@ -146,7 +146,7 @@ static int zmk_battery_update(const struct device *battery) {
         if (charging_start_time != 0) {
             charging_start_time = 0;
             charging_start_level = 0;
-            LOG_DBG("Charging stopped, real level: %d%% (%d mV)", state_of_charge.val1, mv);
+            LOG_INF("=== Charging stopped, real level: %d%% (%d mV) ===", state_of_charge.val1, mv);
         }
 
         // Cache value when USB is not present
@@ -154,7 +154,7 @@ static int zmk_battery_update(const struct device *battery) {
             last_state_without_usb = state_of_charge.val1;
         }
 
-        LOG_DBG("State of charge %d from %d mv", state_of_charge.val1, mv);
+        LOG_INF("State of charge: %d%% from %d mV", state_of_charge.val1, mv);
     }
 #else
 #error "Not a supported reporting fetch mode"
@@ -200,7 +200,7 @@ K_WORK_DEFINE(battery_work, zmk_battery_work);
 
 // Delayed work for initial measurement after boot
 static void zmk_battery_delayed_work(struct k_work *work) {
-    LOG_DBG("Initial battery measurement after boot stabilization");
+    LOG_INF("=== BOOT: Battery measurement ===");
     zmk_battery_update(battery);
 }
 
@@ -235,27 +235,26 @@ static int battery_event_listener(const zmk_event_t *eh) {
     if (as_zmk_activity_state_changed(eh)) {
         enum zmk_activity_state state = zmk_activity_get_state();
 
+        LOG_INF("=== Activity state: %d ===", state);
+
         switch (state) {
         case ZMK_ACTIVITY_ACTIVE:
-            // Measure immediately when waking up from sleep
-            // This happens BEFORE RGB and display fully activate, giving clean reading
-            LOG_DBG("Battery measurement on wake-up");
+            LOG_INF("=== ACTIVE: Battery measurement ===");
             zmk_battery_update(battery);
             return 0;
 
         case ZMK_ACTIVITY_IDLE:
-            // Measure once when transitioning to idle - minimal load
-            LOG_DBG("Battery measurement on idle transition");
+            LOG_INF("=== IDLE: Battery measurement ===");
             zmk_battery_update(battery);
             return 0;
 
         case ZMK_ACTIVITY_SLEEP:
-            // Measure once before deep sleep - almost no load
-            LOG_DBG("Battery measurement before sleep");
+            LOG_INF("=== SLEEP: Battery measurement ===");
             zmk_battery_update(battery);
             return 0;
 
         default:
+            LOG_INF("=== Unknown state: %d ===", state);
             break;
         }
     }

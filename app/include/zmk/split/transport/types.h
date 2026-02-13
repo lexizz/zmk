@@ -57,6 +57,7 @@ struct zmk_split_transport_peripheral_event {
 
         struct {
             uint8_t level;
+            uint16_t millivolts;
         } battery_event;
     } data;
 } __packed;

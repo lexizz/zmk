@@ -58,6 +58,7 @@ int zmk_split_transport_central_peripheral_event_handler(
         struct zmk_peripheral_battery_state_changed battery_ev = {
             .source = source,
             .state_of_charge = ev.data.battery_event.level,
+            .millivolts = ev.data.battery_event.millivolts,
         };
         peripheral_battery_levels[source] = ev.data.battery_event.level;
         return raise_zmk_peripheral_battery_state_changed(battery_ev);

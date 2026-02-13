@@ -27,6 +27,7 @@ static uint8_t last_state_without_usb = 0;
 static uint8_t charging_start_level = 0;
 static int64_t charging_start_time = 0;
 static uint16_t last_millivolts = 0;
+static uint16_t last_reported_millivolts = 0;
 
 uint8_t zmk_battery_state_of_charge(void) { return last_state_of_charge; }
 
@@ -159,8 +160,15 @@ static int zmk_battery_update(const struct device *battery) {
 #error "Not a supported reporting fetch mode"
 #endif
 
-    if (last_state_of_charge != state_of_charge.val1) {
+    // Generate event if battery % changed OR voltage changed significantly (>50mV)
+    // or this is the first measurement (last_reported_millivolts == 0)
+    bool voltage_changed = (last_reported_millivolts == 0) ||
+                           (last_millivolts > last_reported_millivolts + 50) ||
+                           (last_millivolts + 50 < last_reported_millivolts);
+
+    if (last_state_of_charge != state_of_charge.val1 || voltage_changed) {
         last_state_of_charge = state_of_charge.val1;
+        last_reported_millivolts = last_millivolts;
 
         rc = raise_zmk_battery_state_changed(
             (struct zmk_battery_state_changed){.state_of_charge = last_state_of_charge,

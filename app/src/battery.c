@@ -285,4 +285,17 @@ ZMK_LISTENER(battery, battery_event_listener);
 
 ZMK_SUBSCRIPTION(battery, zmk_activity_state_changed);
 
+// TEMPORARY: For testing - measure battery on key press
+static int battery_position_listener(const zmk_event_t *eh) {
+    struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
+    if (ev && ev->state) {  // Only on key press, not release
+        LOG_INF("=== KEY PRESS: Battery measurement (test mode) ===");
+        zmk_battery_update(battery);
+    }
+    return 0;
+}
+
+ZMK_LISTENER(battery_test, battery_position_listener);
+ZMK_SUBSCRIPTION(battery_test, zmk_position_state_changed);
+
 SYS_INIT(zmk_battery_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);

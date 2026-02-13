@@ -71,43 +71,31 @@ static int zmk_battery_update(const struct device *battery) {
         LOG_INF("!!! ERROR: Failed to get battery state of charge: %d", rc);
         return rc;
     }
-#elif IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE)
-    rc = sensor_sample_fetch_chan(battery, SENSOR_CHAN_VOLTAGE);
-    if (rc != 0) {
-        LOG_INF("!!! ERROR: Failed to fetch battery values: %d", rc);
-        return rc;
-    }
 
+    // Also get voltage for charging detection
     struct sensor_value voltage;
-    rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
-
+    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
     if (rc != 0) {
         LOG_INF("!!! ERROR: Failed to get battery voltage: %d", rc);
         return rc;
     }
 
     uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
-
-    // Detailed ADC debugging - use INF to always see it
-    LOG_INF("ADC raw: val1=%d val2=%d => %d mV", voltage.val1, voltage.val2, mv);
-
-    // When USB is connected, ADC reads charging voltage (~4.2V) instead of real battery level
-    // Estimate charging progress based on time
     bool usb_present = is_usb_power_present();
-    LOG_INF("USB present: %s", usb_present ? "YES" : "NO");
+    LOG_INF("USB present: %s, Voltage: %d mV", usb_present ? "YES" : "NO", mv);
 
+    // When USB is connected and voltage is high, estimate charging progress
     if (usb_present && mv >= 4100) {
         // USB charging detected
         if (charging_start_time == 0) {
             // First time detecting charging - save initial state
-            charging_start_level = last_state_without_usb > 0 ? last_state_without_usb : lithium_ion_mv_to_pct(mv);
+            charging_start_level = last_state_without_usb > 0 ? last_state_without_usb : state_of_charge.val1;
             charging_start_time = k_uptime_get();
             state_of_charge.val1 = charging_start_level;
             LOG_INF("=== Charging started at %d%% (measured %d mV) ===", charging_start_level, mv);
         } else {
             // Estimate progress based on time
             // Assumptions: 550mAh battery, 300mA charge current
-            // Full charge from 0% takes ~110 minutes
             // Rate: 0-90% = 0.91%/min, 90-100% = 0.45%/min (slower near full)
             int64_t elapsed_ms = k_uptime_get() - charging_start_time;
             int32_t elapsed_min = (int32_t)(elapsed_ms / 60000);
@@ -139,9 +127,7 @@ static int zmk_battery_update(const struct device *battery) {
                     state_of_charge.val1, charging_start_level, charge_added, elapsed_min, mv);
         }
     } else {
-        // USB not present or voltage is normal - use real measurement
-        state_of_charge.val1 = lithium_ion_mv_to_pct(mv);
-
+        // USB not present or voltage is normal - use real measurement from sensor
         // Reset charging tracking when USB disconnected
         if (charging_start_time != 0) {
             charging_start_time = 0;
@@ -156,6 +142,25 @@ static int zmk_battery_update(const struct device *battery) {
 
         LOG_INF("State of charge: %d%% from %d mV", state_of_charge.val1, mv);
     }
+#elif IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE)
+    rc = sensor_sample_fetch_chan(battery, SENSOR_CHAN_VOLTAGE);
+    if (rc != 0) {
+        LOG_DBG("Failed to fetch battery values: %d", rc);
+        return rc;
+    }
+
+    struct sensor_value voltage;
+    rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
+
+    if (rc != 0) {
+        LOG_DBG("Failed to get battery voltage: %d", rc);
+        return rc;
+    }
+
+    uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
+    state_of_charge.val1 = lithium_ion_mv_to_pct(mv);
+
+    LOG_DBG("State of change %d from %d mv", state_of_charge.val1, mv);
 #else
 #error "Not a supported reporting fetch mode"
 #endif

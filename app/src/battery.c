@@ -88,9 +88,13 @@ static int zmk_battery_update(const struct device *battery) {
 
     uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
 
+    // Detailed ADC debugging
+    LOG_DBG("ADC raw: val1=%d val2=%d => %d mV", voltage.val1, voltage.val2, mv);
+
     // When USB is connected, ADC reads charging voltage (~4.2V) instead of real battery level
     // Estimate charging progress based on time
     bool usb_present = is_usb_power_present();
+    LOG_DBG("USB present: %s", usb_present ? "YES" : "NO");
 
     if (usb_present && mv >= 4100) {
         // USB charging detected

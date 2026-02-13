@@ -20,6 +20,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/activity.h>
+#include <zmk/usb.h>
 #include <zmk/workqueue.h>
 
 static uint8_t last_state_of_charge = 0;
@@ -56,6 +57,21 @@ static uint8_t lithium_ion_mv_to_pct(int16_t bat_mv) {
 
 #endif // IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE)
 
+// Forward declaration for zmk_battery_update (used in charging work)
+static int zmk_battery_update(const struct device *battery);
+
+// Periodic work for monitoring battery voltage during charging
+static void zmk_battery_charging_work(struct k_work *work) {
+    zmk_battery_update(battery);
+
+    // Reschedule if still charging (timer remains active)
+    if (charging_timer_active) {
+        k_work_schedule(&battery_charging_work, K_SECONDS(30));
+    }
+}
+
+K_WORK_DELAYABLE_DEFINE(battery_charging_work, zmk_battery_charging_work);
+
 static int zmk_battery_update(const struct device *battery) {
     struct sensor_value state_of_charge;
     int rc;
@@ -85,7 +101,7 @@ static int zmk_battery_update(const struct device *battery) {
 
     uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
     last_millivolts = mv;  // Store voltage for event
-    bool usb_present = is_usb_power_present();
+    bool usb_present = zmk_usb_is_powered();
 
     // When USB is connected and voltage is high, estimate charging progress
     if (usb_present && mv >= 4100) {
@@ -225,18 +241,6 @@ static void zmk_battery_delayed_work(struct k_work *work) {
 }
 
 K_WORK_DELAYABLE_DEFINE(battery_delayed_work, zmk_battery_delayed_work);
-
-// Periodic work for monitoring battery voltage during charging
-static void zmk_battery_charging_work(struct k_work *work) {
-    zmk_battery_update(battery);
-
-    // Reschedule if still charging (timer remains active)
-    if (charging_timer_active) {
-        k_work_schedule(&battery_charging_work, K_SECONDS(30));
-    }
-}
-
-K_WORK_DELAYABLE_DEFINE(battery_charging_work, zmk_battery_charging_work);
 
 static int zmk_battery_init(void) {
 #if !DT_HAS_CHOSEN(zmk_battery)

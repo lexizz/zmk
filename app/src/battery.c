@@ -28,6 +28,7 @@ static uint8_t charging_start_level = 0;
 static int64_t charging_start_time = 0;
 static uint16_t last_millivolts = 0;
 static uint16_t last_reported_millivolts = 0;
+static bool charging_timer_active = false;
 
 uint8_t zmk_battery_state_of_charge(void) { return last_state_of_charge; }
 
@@ -90,10 +91,16 @@ static int zmk_battery_update(const struct device *battery) {
     if (usb_present && mv >= 4100) {
         // USB charging detected
         if (charging_start_time == 0) {
-            // First time detecting charging - save initial state
+            // First time detecting charging - save initial state and start periodic timer
             charging_start_level = last_state_without_usb > 0 ? last_state_without_usb : state_of_charge.val1;
             charging_start_time = k_uptime_get();
             state_of_charge.val1 = charging_start_level;
+
+            // Start periodic measurements every 30 seconds during charging
+            if (!charging_timer_active) {
+                charging_timer_active = true;
+                k_work_schedule(&battery_charging_work, K_SECONDS(30));
+            }
         } else {
             // Estimate progress based on time
             // Assumptions: 550mAh battery, 300mA charge current
@@ -130,6 +137,12 @@ static int zmk_battery_update(const struct device *battery) {
         if (charging_start_time != 0) {
             charging_start_time = 0;
             charging_start_level = 0;
+
+            // Stop periodic timer when charging ends
+            if (charging_timer_active) {
+                charging_timer_active = false;
+                k_work_cancel_delayable(&battery_charging_work);
+            }
         }
 
         // Cache value when USB is not present
@@ -213,6 +226,18 @@ static void zmk_battery_delayed_work(struct k_work *work) {
 
 K_WORK_DELAYABLE_DEFINE(battery_delayed_work, zmk_battery_delayed_work);
 
+// Periodic work for monitoring battery voltage during charging
+static void zmk_battery_charging_work(struct k_work *work) {
+    zmk_battery_update(battery);
+
+    // Reschedule if still charging (timer remains active)
+    if (charging_timer_active) {
+        k_work_schedule(&battery_charging_work, K_SECONDS(30));
+    }
+}
+
+K_WORK_DELAYABLE_DEFINE(battery_charging_work, zmk_battery_charging_work);
+
 static int zmk_battery_init(void) {
 #if !DT_HAS_CHOSEN(zmk_battery)
     battery = device_get_binding("BATTERY");
@@ -245,14 +270,32 @@ static int battery_event_listener(const zmk_event_t *eh) {
         switch (state) {
         case ZMK_ACTIVITY_ACTIVE:
             zmk_battery_update(battery);
+
+            // Resume periodic timer if charging is active
+            if (charging_start_time != 0 && !charging_timer_active) {
+                charging_timer_active = true;
+                k_work_schedule(&battery_charging_work, K_SECONDS(30));
+            }
             return 0;
 
         case ZMK_ACTIVITY_IDLE:
             zmk_battery_update(battery);
+
+            // Stop periodic timer in idle mode to save power
+            if (charging_timer_active) {
+                charging_timer_active = false;
+                k_work_cancel_delayable(&battery_charging_work);
+            }
             return 0;
 
         case ZMK_ACTIVITY_SLEEP:
             zmk_battery_update(battery);
+
+            // Stop periodic timer in sleep mode to save power
+            if (charging_timer_active) {
+                charging_timer_active = false;
+                k_work_cancel_delayable(&battery_charging_work);
+            }
             return 0;
 
         default:

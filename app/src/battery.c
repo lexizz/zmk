@@ -275,7 +275,8 @@ static int battery_event_listener(const zmk_event_t *eh) {
 
         switch (state) {
         case ZMK_ACTIVITY_ACTIVE:
-            zmk_battery_update(battery);
+            // Use async work to avoid blocking RGB and other systems
+            k_work_submit(&battery_work);
 
             // Resume periodic timer if charging is active
             if (charging_start_time != 0 && !charging_timer_active) {
@@ -285,7 +286,8 @@ static int battery_event_listener(const zmk_event_t *eh) {
             return 0;
 
         case ZMK_ACTIVITY_IDLE:
-            zmk_battery_update(battery);
+            // Use async work to avoid blocking
+            k_work_submit(&battery_work);
 
             // Stop periodic timer in idle mode to save power
             if (charging_timer_active) {
@@ -295,7 +297,8 @@ static int battery_event_listener(const zmk_event_t *eh) {
             return 0;
 
         case ZMK_ACTIVITY_SLEEP:
-            zmk_battery_update(battery);
+            // Use async work to avoid blocking
+            k_work_submit(&battery_work);
 
             // Stop periodic timer in sleep mode to save power
             if (charging_timer_active) {

@@ -499,9 +499,11 @@ static int rgb_underglow_auto_state(bool target_wake_state) {
             }
         }
 #endif
-        // Turn off hardware without persisting state.on=false to NVS so that
-        // after deep sleep (cold reboot) NVS still contains the user's last
-        // intended on/off state and RGB restores correctly on next boot.
+        // Set state.on = false to keep state consistent (toggle/get_state correct)
+        // and prevent timer handler from resubmitting tick work.
+        // Do NOT call zmk_rgb_underglow_save_state() — NVS must retain the user's
+        // intended on/off state so RGB restores correctly after deep sleep reboot.
+        state.on = false;
         k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
         k_timer_stop(&underglow_tick);
         return 0;

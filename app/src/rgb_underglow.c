@@ -482,20 +482,40 @@ static int rgb_underglow_auto_state(bool target_wake_state) {
     if (sleep_state.is_awake) {
         if (sleep_state.rgb_state_before_sleeping) {
             return zmk_rgb_underglow_on();
-        } else {
-            return zmk_rgb_underglow_off();
         }
+        // Was already off before sleep — nothing to do
+        return 0;
     } else {
         sleep_state.rgb_state_before_sleeping = state.on;
-        return zmk_rgb_underglow_off();
+
+        if (!led_strip)
+            return -ENODEV;
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+        if (ext_power != NULL) {
+            int rc = ext_power_disable(ext_power);
+            if (rc != 0) {
+                LOG_ERR("Unable to disable EXT_POWER: %d", rc);
+            }
+        }
+#endif
+        // Turn off hardware without persisting state.on=false to NVS so that
+        // after deep sleep (cold reboot) NVS still contains the user's last
+        // intended on/off state and RGB restores correctly on next boot.
+        k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
+        k_timer_stop(&underglow_tick);
+        return 0;
     }
 }
 
 static int rgb_underglow_event_listener(const zmk_event_t *eh) {
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE)
-    if (as_zmk_activity_state_changed(eh)) {
-        return rgb_underglow_auto_state(zmk_activity_get_state() == ZMK_ACTIVITY_ACTIVE);
+    {
+        const struct zmk_activity_state_changed *activity_ev;
+        if ((activity_ev = as_zmk_activity_state_changed(eh))) {
+            return rgb_underglow_auto_state(activity_ev->state == ZMK_ACTIVITY_ACTIVE);
+        }
     }
 #endif
 
